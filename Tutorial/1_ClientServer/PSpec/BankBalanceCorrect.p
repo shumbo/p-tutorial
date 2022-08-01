@@ -33,20 +33,23 @@ what was requested by the client.
 new account balance is correct and if the withdraw failed it is because the withdraw will make the account
 balance go below 10 dollars which is against the bank policies!
 ****************************************************/
-spec BankBalanceIsAlwaysCorrect observes eWithDrawReq,  eWithDrawResp, eSpec_BankBalanceIsAlwaysCorrect_Init {
+spec BankBalanceIsAlwaysCorrect observes eWithDrawReq,  eWithDrawResp, eDepositReq, eDepositResp, eSpec_BankBalanceIsAlwaysCorrect_Init {
   // keep track of the bank balance for each client: map from accountId to bank balance.
   var bankBalance: map[int, int];
   // keep track of the pending withdraw requests that have not been responded yet.
   // map from reqId -> withdraw request
   var pendingWithDraws: map[int, tWithDrawReq];
 
+  // keep track of the pending deposit requests that have not been responded yet.
+  var pendingDeposits: map[int, tDepositReq];
+
   start state Init {
-    on eSpec_BankBalanceIsAlwaysCorrect_Init goto WaitForWithDrawReqAndResp with (balance: map[int, int]){
+    on eSpec_BankBalanceIsAlwaysCorrect_Init goto WaitForReqAndResp with (balance: map[int, int]){
       bankBalance = balance;
     }
   }
 
-  state WaitForWithDrawReqAndResp {
+  state WaitForReqAndResp {
     on eWithDrawReq do (req: tWithDrawReq) {
       assert req.accountId in bankBalance,
         format ("Unknown accountId {0} in the withdraw request. Valid accountIds = {1}",
@@ -82,6 +85,28 @@ spec BankBalanceIsAlwaysCorrect observes eWithDrawReq,  eWithDrawResp, eSpec_Ban
             bankBalance[resp.accountId], resp.balance);
       }
     }
+
+    on eDepositReq do (req: tDepositReq) {
+      assert req.accountId in bankBalance,
+        format ("Unknown accountId {0} in the withdraw request. Valid accountIds = {1}",
+          req.accountId, keys(bankBalance));
+      pendingDeposits[req.rId] = req;
+    }
+
+    on eDepositResp do (resp: tDepositResp) {
+      assert resp.accountId in bankBalance,
+        format ("Unknown accountId {0} in the deposit response!", resp.accountId);
+      assert resp.rId in pendingDeposits,
+        format ("Unknown rId {0} in the deposit response!", resp.rId);
+      assert resp.balance >= 10,
+        "Bank balance in all accounts must always be greater than or equal to 10!!";
+
+      assert resp.balance == bankBalance[resp.accountId] + pendingDeposits[resp.rId].amount,
+        format ("Bank balance for the account {0} is {1} and not the expected value {2}, Bank is lying!",
+          resp.accountId, resp.balance, bankBalance[resp.accountId] + pendingDeposits[resp.rId].amount);
+      // update the new account balance
+      bankBalance[resp.accountId] = resp.balance;
+    }
   }
 }
 
@@ -110,6 +135,28 @@ spec GuaranteedWithDrawProgress observes eWithDrawReq, eWithDrawResp {
 
     on eWithDrawReq goto PendingReqs with (req: tWithDrawReq){
       pendingWDReqs += (req.rId);
+    }
+  }
+}
+
+spec GuaranteedDepositProgress observes eDepositReq, eDepositResp {
+  var pendingDepositReqs: set[int];
+  start state NoPendingRequests {
+    on eDepositReq goto PendingReqs with (req: tDepositReq) {
+      pendingDepositReqs += (req.rId);
+    }
+  }
+  hot state PendingReqs {
+    on eDepositResp do (resp: tDepositResp) {
+      assert resp.rId in pendingDepositReqs,
+        format ("unexpected rId: {0} received, expected one of {1}", resp.rId, pendingDepositReqs);
+      pendingDepositReqs -= (resp.rId);
+      if(sizeof(pendingDepositReqs) == 0) // all requests have been responded
+        goto NoPendingRequests;
+    }
+
+    on eDepositReq goto PendingReqs with (req: tDepositReq) {
+      pendingDepositReqs += (req.rId);
     }
   }
 }

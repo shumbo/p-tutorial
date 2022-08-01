@@ -10,6 +10,12 @@ type tWithDrawReq = (source: Client, accountId: int, amount: int, rId:int);
 // `rId`: request id for which this is the response.
 type tWithDrawResp = (status: tWithDrawRespStatus, accountId: int, balance: int, rId: int);
 
+// payload type associated with eDepositReq
+type tDepositReq = (source: Client, accountId: int, amount: int, rId: int);
+
+// payload type associated with eDepositResp
+type tDepositResp = (accountId: int, balance: int, rId: int);
+
 // enum representing the response status for the withdraw request
 enum tWithDrawRespStatus {
   WITHDRAW_SUCCESS,
@@ -20,6 +26,12 @@ enum tWithDrawRespStatus {
 event eWithDrawReq : tWithDrawReq;
 // event: withdraw response (from bank server to client)
 event eWithDrawResp: tWithDrawResp;
+
+
+// event: deposit request (from client to bank server)
+event eDepositReq : tDepositReq;
+// event: deposit response (from bank server to client)
+event eDepositResp : tDepositResp;
 
 
 machine Client
@@ -49,7 +61,7 @@ machine Client
 
       // If current balance is <= 10 then we need more deposits before any more withdrawal
       if(currentBalance <= 10)
-        goto NoMoneyToWithDraw;
+        goto DepositMoney;
 
       // send withdraw request to the bank for a random amount between (1 to current balance + 1)
       send server, eWithDrawReq, (source = this, accountId = accountId, amount = WithdrawAmount(), rId = nextReqId);
@@ -57,7 +69,7 @@ machine Client
     }
 
     on eWithDrawResp do (resp: tWithDrawResp) {
-      // bank always ensures that a client has atleast 10 dollars in the account
+      // bank always ensures that a client has at least 10 dollars in the account
       assert resp.balance >= 10, "Bank balance must be greater than 10!!";
       if(resp.status == WITHDRAW_SUCCESS) // withdraw succeeded
       {
@@ -80,16 +92,31 @@ machine Client
     }
   }
 
+  state DepositMoney {
+    entry {
+      // if I am here then the amount of money in my account should be exactly 10
+      assert currentBalance == 10, "Hmm, I still have money that I can withdraw but I have reached NoMoneyToWithDraw state!";
+      print format ("No Money to withdraw, depositing money...");
+
+      // send deposit request to the bank
+      send server, eDepositReq, (source = this, accountId = accountId, amount = DepositAmount(), rId = nextReqId);
+      nextReqId = nextReqId + 1;
+    }
+
+    on eDepositResp do (resp: tDepositResp) {
+      assert resp.balance >= 10, "Bank balance must be greater than 10!";
+      print format ("Deposit with rId = {0} succeeded, new account balance = {1}", resp.rId, resp.balance);
+      currentBalance = resp.balance;
+      goto WithdrawMoney;
+    }
+  }
+
   // function that returns a random integer between (1 to current balance + 1)
   fun WithdrawAmount() : int {
     return choose(currentBalance) + 1;
   }
 
-  state NoMoneyToWithDraw {
-    entry {
-      // if I am here then the amount of money in my account should be exactly 10
-      assert currentBalance == 10, "Hmm, I still have money that I can withdraw but I have reached NoMoneyToWithDraw state!";
-      print format ("No Money to withdraw, waiting for more deposits!");
-    }
+  fun DepositAmount() : int {
+    return choose(100) + 1;
   }
 }
